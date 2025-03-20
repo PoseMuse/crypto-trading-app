@@ -1,0 +1,18 @@
+version: '3'
+
+services:
+  crypto-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: crypto-bot:latest
+    container_name: crypto-bot
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./.env:/app/.env
+    ports:
+      - "8080:8080"  # For health check endpoint
+    # If you want to override the default command in Dockerfile
+    # command: python src/backtest_example.py 

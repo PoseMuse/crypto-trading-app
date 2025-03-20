@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+venv/
+
+# IDE specific files
+.vscode/
+.idea/
+
+# OS specific files
+.DS_Store
+
+# Project specific
+configs/api_keys.json
+data/*.csv
+data/*.json
