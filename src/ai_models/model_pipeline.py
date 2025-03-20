@@ -253,21 +253,79 @@ def evaluate_model(
 
 def save_model(model: lgb.Booster, filepath: str) -> None:
     """
-    Save the trained model to disk.
+    Save LightGBM model to file.
     
     Args:
         model: Trained LightGBM model
         filepath: Path to save the model
+    """
+    try:
+        # Create directory if it doesn't exist
+        directory = os.path.dirname(filepath)
+        if directory and not os.path.exists(directory):
+            os.makedirs(directory)
+            
+        # Save the model
+        model.save_model(filepath)
+        print(f"Model saved to {filepath}")
+    except Exception as e:
+        print(f"Error saving model: {e}")
+
+
+def export_to_onnx(model: lgb.Booster, feature_names: List[str], filepath: str) -> str:
+    """
+    Export a trained LightGBM model to ONNX format.
+    
+    Args:
+        model: Trained LightGBM model
+        feature_names: List of feature names used in the model
+        filepath: Path to save the ONNX model
         
     Returns:
-        None
+        Path to saved ONNX model
+        
+    Notes:
+        Requires skl2onnx and onnxmltools packages to be installed.
+        Install with: pip install skl2onnx onnxmltools
     """
-    # Create directory if it doesn't exist
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    
-    # Save the model
-    model.save_model(filepath)
-    print(f"Model saved to {filepath}")
+    try:
+        # Import required packages
+        import skl2onnx
+        from skl2onnx.common.data_types import FloatTensorType
+        from onnxmltools.convert import convert_lightgbm
+        from onnxmltools.convert.common.data_types import FloatTensorType as ONNXFloatTensorType
+        
+        # Set the filepath extension if not provided
+        if not filepath.endswith('.onnx'):
+            filepath += '.onnx'
+            
+        # Create directory if it doesn't exist
+        directory = os.path.dirname(filepath)
+        if directory and not os.path.exists(directory):
+            os.makedirs(directory)
+            
+        # Get number of features
+        num_features = len(feature_names)
+        
+        # Initial types for the model
+        initial_types = [('input', ONNXFloatTensorType([None, num_features]))]
+        
+        # Convert the model to ONNX
+        onnx_model = convert_lightgbm(model, initial_types=initial_types, target_opset=12)
+        
+        # Save the ONNX model
+        with open(filepath, "wb") as f:
+            f.write(onnx_model.SerializeToString())
+            
+        print(f"ONNX model exported to {filepath}")
+        return filepath
+    except ImportError as e:
+        print(f"Error importing ONNX libraries: {e}")
+        print("Please install required packages with: pip install skl2onnx onnxmltools")
+        return ""
+    except Exception as e:
+        print(f"Error exporting to ONNX: {e}")
+        return ""
 
 
 def load_model(filepath: str) -> lgb.Booster:
