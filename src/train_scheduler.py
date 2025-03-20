@@ -36,7 +36,16 @@ from src.ai_models.model_pipeline import (
 from src.sentiment_analysis.sentiment_pipeline import (
     fetch_reddit_posts,
     analyze_sentiment,
-    aggregate_sentiment
+    aggregate_sentiment,
+    aggregate_multisource_sentiment
+)
+from src.sentiment_analysis.telegram_pipeline import (
+    fetch_telegram_messages,
+    fetch_telegram_sentiment
+)
+from src.sentiment_analysis.twitter_pipeline import (
+    fetch_twitter_tweets,
+    fetch_twitter_sentiment
 )
 
 # Configure logging
@@ -60,7 +69,7 @@ def setup_directories():
 
 def fetch_sentiment_data(symbols, days_back=7):
     """
-    Fetch and analyze sentiment data for specified symbols.
+    Fetch and analyze sentiment data for specified symbols from multiple sources.
     
     Args:
         symbols: List of symbol names (e.g., ['BTC', 'ETH'])
@@ -72,25 +81,65 @@ def fetch_sentiment_data(symbols, days_back=7):
     all_sentiment = {}
     
     for symbol in symbols:
+        # Reddit data
         subreddits = [f"crypto", f"{symbol}", f"{symbol}currency"]
         
-        # Fetch Reddit posts
         logger.info(f"Fetching Reddit posts for {symbol} from {subreddits}")
-        posts = fetch_reddit_posts(
+        reddit_posts = fetch_reddit_posts(
             subreddits=subreddits,
             limit=100,
-            time_filter="week",
-            use_mock=True  # Set to False in production with real API keys
+            time_filter="week"
         )
         
-        # Analyze sentiment
-        if posts:
-            sentiment_data = aggregate_sentiment(posts)
+        # Telegram data
+        telegram_channels = [f"crypto_{symbol.lower()}", "cryptosignals"]
+        
+        logger.info(f"Fetching Telegram messages for {symbol} from {telegram_channels}")
+        telegram_messages = []
+        for channel in telegram_channels:
+            channel_messages = fetch_telegram_messages(
+                channel_username=channel,
+                limit=100
+            )
+            telegram_messages.extend(channel_messages)
+        
+        # Twitter data
+        twitter_query = f"{symbol} crypto"
+        
+        logger.info(f"Fetching Twitter tweets for query: {twitter_query}")
+        twitter_tweets = fetch_twitter_tweets(
+            query=twitter_query,
+            limit=100,
+            days_back=days_back
+        )
+        
+        # Aggregate sentiment from all sources
+        if reddit_posts or telegram_messages or twitter_tweets:
+            # Source weights - can be adjusted based on reliability
+            source_weights = {
+                'reddit': 1.0,    # Full weight for Reddit
+                'telegram': 0.5,  # Half weight for Telegram (could be less reliable)
+                'twitter': 1.0    # Full weight for Twitter
+            }
+            
+            sentiment_data = aggregate_multisource_sentiment(
+                reddit_posts=reddit_posts,
+                telegram_messages=telegram_messages,
+                twitter_tweets=twitter_tweets,
+                source_weights=source_weights
+            )
+            
             all_sentiment[symbol] = sentiment_data.get('compound_score', 0)
-            logger.info(f"Sentiment for {symbol}: {all_sentiment[symbol]}")
+            
+            # Log the breakdown by source
+            source_breakdown = sentiment_data.get('source_breakdown', {})
+            logger.info(f"Sentiment for {symbol}: {all_sentiment[symbol]} (overall)")
+            logger.info(f"  Reddit: {source_breakdown.get('reddit', {}).get('compound_score', 0)} ({len(reddit_posts)} posts)")
+            logger.info(f"  Telegram: {source_breakdown.get('telegram', {}).get('compound_score', 0)} ({len(telegram_messages)} messages)")
+            logger.info(f"  Twitter: {source_breakdown.get('twitter', {}).get('compound_score', 0)} ({len(twitter_tweets)} tweets)")
         else:
             all_sentiment[symbol] = 0
-            logger.warning(f"No posts found for {symbol}")
+            logger.warning(f"No data found for {symbol} from any source")
     
     # Create a simple dataframe with sentiment scores
     dates = [(datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d') for i in range(days_back)]

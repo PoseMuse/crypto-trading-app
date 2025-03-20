@@ -88,7 +88,8 @@ class PaperTrader:
         strategy_params: Optional[Dict] = None,
         initial_cash: float = 10000,
         commission: float = 0.001,
-        output_dir: str = 'output/paper_trading'
+        output_dir: str = 'output/paper_trading',
+        enable_sentiment: bool = False
     ):
         """
         Initialize the paper trader.
@@ -102,6 +103,7 @@ class PaperTrader:
             initial_cash: Initial cash amount
             commission: Commission rate
             output_dir: Directory for output files
+            enable_sentiment: Whether to enable sentiment analysis
         """
         self.exchange_id = exchange_id
         self.symbol = symbol
@@ -111,6 +113,7 @@ class PaperTrader:
         self.initial_cash = initial_cash
         self.commission = commission
         self.output_dir = output_dir
+        self.enable_sentiment = enable_sentiment
         
         # Ensure output directory exists
         Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -264,8 +267,7 @@ class PaperTrader:
         """
         Fetch sentiment data for the given data.
         
-        In a real implementation, this would call the sentiment analysis module.
-        For now, we'll use random values as a placeholder.
+        Uses the sentiment analysis module to get real sentiment data for the current symbol.
         
         Args:
             data: DataFrame with price data
@@ -276,12 +278,80 @@ class PaperTrader:
         # Create a copy of the data
         df = data.copy()
         
-        # Generate random sentiment values
-        np.random.seed(42)  # For reproducibility
-        sentiment = np.random.normal(0, 0.3, size=len(df))
-        
-        # Smooth the sentiment with a moving average
-        df['sentiment'] = pd.Series(sentiment, index=df.index).rolling(window=5).mean().fillna(0)
+        try:
+            # Extract the base currency for sentiment analysis
+            base_currency = self.symbol.split('/')[0]
+            
+            # Import sentiment modules here to avoid circular imports
+            from sentiment_analysis.sentiment_pipeline import (
+                fetch_reddit_posts, 
+                aggregate_sentiment,
+                aggregate_multisource_sentiment
+            )
+            from sentiment_analysis.telegram_pipeline import fetch_telegram_messages
+            from sentiment_analysis.twitter_pipeline import fetch_twitter_tweets
+            
+            # Define sources to search
+            subreddits = [f"crypto", f"{base_currency.lower()}", "cryptocurrency"]
+            telegram_channels = [f"crypto_{base_currency.lower()}", "cryptosignals"]
+            twitter_query = f"{base_currency} crypto"
+            
+            # Fetch sentiment data from multiple sources
+            print(f"Fetching sentiment data for {base_currency} from multiple sources...")
+            
+            # Reddit
+            reddit_posts = fetch_reddit_posts(
+                subreddits=subreddits,
+                limit=100,
+                time_filter="day"
+            )
+            
+            # Telegram
+            telegram_messages = []
+            for channel in telegram_channels:
+                channel_messages = fetch_telegram_messages(
+                    channel_username=channel,
+                    limit=100
+                )
+                telegram_messages.extend(channel_messages)
+            
+            # Twitter
+            twitter_tweets = fetch_twitter_tweets(
+                query=twitter_query,
+                limit=100,
+                days_back=1
+            )
+            
+            # Aggregate sentiment from all sources
+            if reddit_posts or telegram_messages or twitter_tweets:
+                # Source weights - can be adjusted based on reliability
+                source_weights = {
+                    'reddit': 1.0,    # Full weight for Reddit
+                    'telegram': 0.5,  # Half weight for Telegram
+                    'twitter': 1.0    # Full weight for Twitter
+                }
+                
+                sentiment_data = aggregate_multisource_sentiment(
+                    reddit_posts=reddit_posts,
+                    telegram_messages=telegram_messages,
+                    twitter_tweets=twitter_tweets,
+                    source_weights=source_weights
+                )
+                
+                # Set the sentiment value for all rows
+                sentiment_score = sentiment_data.get('compound_score', 0)
+                df['sentiment'] = sentiment_score
+                
+                print(f"Sentiment for {base_currency}: {sentiment_score}")
+                print(f"  Reddit: {len(reddit_posts)} posts")
+                print(f"  Telegram: {len(telegram_messages)} messages")
+                print(f"  Twitter: {len(twitter_tweets)} tweets")
+            else:
+                print(f"No sentiment data found for {base_currency}")
+                df['sentiment'] = 0.0
+        except Exception as e:
+            print(f"Error fetching sentiment data: {e}")
+            df['sentiment'] = 0.0
         
         return df
     
@@ -303,8 +373,13 @@ class PaperTrader:
         # Add AI signals
         data = self._fetch_ai_signals(data)
         
-        # Add sentiment data
-        data = self._fetch_sentiment_data(data)
+        # Add sentiment data if enabled
+        if self.enable_sentiment:
+            print("Fetching sentiment data...")
+            data = self._fetch_sentiment_data(data)
+        else:
+            print("Sentiment analysis disabled")
+            data['sentiment'] = 0.0
         
         # Save historical data
         self.historical_data = data.copy()
@@ -375,7 +450,8 @@ class PaperTrader:
             df = self._fetch_ai_signals(df)
             
             # Add sentiment data
-            df = self._fetch_sentiment_data(df)
+            if self.enable_sentiment:
+                df = self._fetch_sentiment_data(df)
             
             # Update last processed time
             self.last_processed_time = df.index[-1]
@@ -390,13 +466,22 @@ class PaperTrader:
         Update the data feed with new data.
         
         Args:
-            new_data: DataFrame with new data
+            new_data: New data to add to the feed
         """
-        # In a production implementation, this would add the new data to the feed
-        # For simplicity, we'll just append to the historical data
-        self.historical_data = pd.concat([self.historical_data, new_data])
+        # Add AI signals
+        df = self._fetch_ai_signals(new_data)
         
-        print(f"Data feed updated with {len(new_data)} new candles")
+        # Add sentiment data if enabled
+        if self.enable_sentiment:
+            print("Updating sentiment data...")
+            df = self._fetch_sentiment_data(df)
+        
+        # Update the data feed
+        print(f"Updating data feed with candle at {df.index[-1]}")
+        self.data_feed.add_data_row(df.iloc[-1])
+        
+        # Update the last processed time
+        self.last_processed_time = df.index[-1]
     
     def start(self, duration_minutes: Optional[int] = None) -> Dict:
         """
@@ -652,6 +737,8 @@ def main():
                        help='Duration to run in minutes (default: indefinite)')
     parser.add_argument('--output-dir', type=str, default='output/paper_trading',
                        help='Output directory for results (default: output/paper_trading)')
+    parser.add_argument('--enable-sentiment', action='store_true',
+                       help='Enable real-time sentiment analysis (default: False)')
     
     # Strategy parameters
     parser.add_argument('--ai-threshold', type=float, default=0.6,
@@ -685,7 +772,8 @@ def main():
         strategy_params=strategy_params,
         initial_cash=args.cash,
         commission=args.commission,
-        output_dir=args.output_dir
+        output_dir=args.output_dir,
+        enable_sentiment=args.enable_sentiment
     )
     
     # Start paper trading

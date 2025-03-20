@@ -23,10 +23,9 @@ def fetch_reddit_posts(
     subreddits: List[str],
     limit: int = 100,
     time_filter: str = "day",
-    reddit_client_id: str = "YOUR_CLIENT_ID",
-    reddit_client_secret: str = "YOUR_CLIENT_SECRET",
-    reddit_user_agent: str = "YOUR_USER_AGENT",
-    use_mock: bool = False
+    reddit_client_id: str = None,
+    reddit_client_secret: str = None,
+    reddit_user_agent: str = None
 ) -> List[Dict]:
     """
     Fetch recent posts from specified subreddits.
@@ -38,22 +37,27 @@ def fetch_reddit_posts(
         reddit_client_id: Reddit API client ID
         reddit_client_secret: Reddit API client secret
         reddit_user_agent: Reddit API user agent string
-        use_mock: If True, return mock data instead of calling Reddit API
         
     Returns:
         List of dictionaries containing post data
     
     Note:
-        Requires Reddit API credentials. Set use_mock=True for testing without credentials.
+        Requires Reddit API credentials from environment variables if not provided.
     """
-    if use_mock:
-        return _mock_reddit_posts(subreddits, limit)
-    
     try:
         import praw
     except ImportError:
-        print("Error: PRAW library not installed. Run 'pip install praw' or use use_mock=True")
-        return _mock_reddit_posts(subreddits, limit)
+        print("Error: PRAW library not installed. Run 'pip install praw'")
+        return []
+    
+    # Get credentials from environment variables if not provided
+    reddit_client_id = reddit_client_id or os.getenv("REDDIT_CLIENT_ID")
+    reddit_client_secret = reddit_client_secret or os.getenv("REDDIT_CLIENT_SECRET")
+    reddit_user_agent = reddit_user_agent or os.getenv("REDDIT_USER_AGENT", "CryptoBot/1.0")
+    
+    if not reddit_client_id or not reddit_client_secret:
+        print("Error: Reddit API credentials not provided. Set environment variables or pass as parameters.")
+        return []
     
     # Initialize the Reddit API client
     try:
@@ -64,8 +68,7 @@ def fetch_reddit_posts(
         )
     except Exception as e:
         print(f"Error initializing Reddit client: {e}")
-        print("Falling back to mock data.")
-        return _mock_reddit_posts(subreddits, limit)
+        return []
     
     all_posts = []
     
@@ -374,4 +377,150 @@ def load_sentiment_data(filepath: str) -> Dict:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError) as e:
         print(f"Error loading sentiment data: {e}")
-        return {} 
+        return {}
+
+
+def aggregate_multisource_sentiment(
+    reddit_posts: List[Dict] = None,
+    telegram_messages: List[Dict] = None,
+    twitter_tweets: List[Dict] = None,
+    source_weights: Dict[str, float] = None
+) -> Dict[str, Any]:
+    """
+    Aggregate sentiment from multiple social media sources with optional weighting.
+    
+    Args:
+        reddit_posts: List of Reddit post dictionaries
+        telegram_messages: List of Telegram message dictionaries
+        twitter_tweets: List of Twitter tweet dictionaries
+        source_weights: Dictionary of weights for each source, e.g., {'reddit': 1.0, 'telegram': 0.5, 'twitter': 1.0}
+                       If not provided, all sources are weighted equally (1.0)
+    
+    Returns:
+        Dictionary with aggregated sentiment analysis results
+    """
+    # Initialize default weights if not provided
+    if source_weights is None:
+        source_weights = {
+            'reddit': 1.0,
+            'telegram': 1.0,
+            'twitter': 1.0
+        }
+    
+    # Ensure lists are not None
+    reddit_posts = reddit_posts or []
+    telegram_messages = telegram_messages or []
+    twitter_tweets = twitter_tweets or []
+    
+    # Calculate sentiment for each source
+    reddit_sentiment = None
+    telegram_sentiment = None
+    twitter_sentiment = None
+    
+    if reddit_posts:
+        reddit_sentiment = aggregate_sentiment(reddit_posts)
+    
+    if telegram_messages:
+        from .telegram_pipeline import analyze_telegram_sentiment
+        telegram_sentiment = analyze_telegram_sentiment(telegram_messages)
+    
+    if twitter_tweets:
+        from .twitter_pipeline import analyze_twitter_sentiment
+        twitter_sentiment = analyze_twitter_sentiment(twitter_tweets)
+    
+    # Count total items across all sources
+    total_items = len(reddit_posts) + len(telegram_messages) + len(twitter_tweets)
+    
+    if total_items == 0:
+        return {
+            'count': 0,
+            'positive_count': 0,
+            'negative_count': 0,
+            'neutral_count': 0,
+            'compound_score': 0.0,
+            'sentiment': 'neutral',
+            'source_breakdown': {
+                'reddit': {'count': 0, 'weight': source_weights.get('reddit', 1.0)},
+                'telegram': {'count': 0, 'weight': source_weights.get('telegram', 1.0)},
+                'twitter': {'count': 0, 'weight': source_weights.get('twitter', 1.0)}
+            }
+        }
+    
+    # Calculate weighted sentiment scores
+    weighted_scores = 0.0
+    total_weight = 0.0
+    
+    # Track counts by sentiment category
+    positive_count = 0
+    negative_count = 0
+    neutral_count = 0
+    
+    # Reddit sentiment
+    if reddit_sentiment:
+        weight = source_weights.get('reddit', 1.0) * len(reddit_posts)
+        weighted_scores += reddit_sentiment.get('compound_score', 0.0) * weight
+        total_weight += weight
+        
+        positive_count += reddit_sentiment.get('positive_count', 0)
+        negative_count += reddit_sentiment.get('negative_count', 0)
+        neutral_count += reddit_sentiment.get('neutral_count', 0)
+    
+    # Telegram sentiment
+    if telegram_sentiment:
+        weight = source_weights.get('telegram', 1.0) * len(telegram_messages)
+        weighted_scores += telegram_sentiment.get('compound_score', 0.0) * weight
+        total_weight += weight
+        
+        positive_count += telegram_sentiment.get('positive_count', 0)
+        negative_count += telegram_sentiment.get('negative_count', 0)
+        neutral_count += telegram_sentiment.get('neutral_count', 0)
+    
+    # Twitter sentiment
+    if twitter_sentiment:
+        weight = source_weights.get('twitter', 1.0) * len(twitter_tweets)
+        weighted_scores += twitter_sentiment.get('compound_score', 0.0) * weight
+        total_weight += weight
+        
+        positive_count += twitter_sentiment.get('positive_count', 0)
+        negative_count += twitter_sentiment.get('negative_count', 0)
+        neutral_count += twitter_sentiment.get('neutral_count', 0)
+    
+    # Calculate overall sentiment score
+    compound_score = weighted_scores / total_weight if total_weight > 0 else 0.0
+    
+    # Determine overall sentiment
+    if compound_score > 0.05:
+        sentiment = 'positive'
+    elif compound_score < -0.05:
+        sentiment = 'negative'
+    else:
+        sentiment = 'neutral'
+    
+    # Create source breakdown for the results
+    source_breakdown = {
+        'reddit': {
+            'count': len(reddit_posts),
+            'weight': source_weights.get('reddit', 1.0),
+            'compound_score': reddit_sentiment.get('compound_score', 0.0) if reddit_sentiment else 0.0
+        },
+        'telegram': {
+            'count': len(telegram_messages),
+            'weight': source_weights.get('telegram', 1.0),
+            'compound_score': telegram_sentiment.get('compound_score', 0.0) if telegram_sentiment else 0.0
+        },
+        'twitter': {
+            'count': len(twitter_tweets),
+            'weight': source_weights.get('twitter', 1.0),
+            'compound_score': twitter_sentiment.get('compound_score', 0.0) if twitter_sentiment else 0.0
+        }
+    }
+    
+    return {
+        'count': total_items,
+        'positive_count': positive_count,
+        'negative_count': negative_count,
+        'neutral_count': neutral_count,
+        'compound_score': compound_score,
+        'sentiment': sentiment,
+        'source_breakdown': source_breakdown
+    } 
