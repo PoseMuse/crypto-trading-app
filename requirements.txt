@@ -27,6 +27,7 @@ vaderSentiment>=3.3.0
 
 # Web server (optional, for monitoring UI)
 flask>=2.0.0
+flask-httpauth>=4.5.0  # Basic Authentication for Flask
 fastapi>=0.68.0
 uvicorn>=0.15.0
 websockets>=10.0

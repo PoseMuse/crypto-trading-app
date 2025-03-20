@@ -1,0 +1,53 @@
+# Git
+.git
+.gitignore
+.github
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Docker
+.dockerignore
+Dockerfile
+docker-compose.yml
+
+# Development and IDE
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*.swo
+
+# Local data and output
+data/
+output/
+logs/
+
+# Documentation
+docs/
+*.md
+
+# Other unnecessary files
+.env.example 

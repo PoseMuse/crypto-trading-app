@@ -1,18 +1,47 @@
-version: '3'
+version: '3.8'
 
 services:
-  crypto-bot:
+  crypto-bot-ui:
     build:
       context: .
       dockerfile: Dockerfile
-    image: crypto-bot:latest
-    container_name: crypto-bot
-    restart: unless-stopped
-    volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs
-      - ./.env:/app/.env
+    restart: always
     ports:
-      - "8080:8080"  # For health check endpoint
-    # If you want to override the default command in Dockerfile
-    # command: python src/backtest_example.py 
+      - "5000:5000"
+    env_file:
+      - .env
+    volumes:
+      # Mount data and output directories for persistence
+      - ./data:/app/data
+      - ./output:/app/output
+      - ./logs:/app/logs
+    environment:
+      - TZ=UTC
+      # Additional environment variables can be specified here
+      - DASHBOARD_USERNAME=${DASHBOARD_USERNAME:-admin}
+      - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-change_this_password_immediately}
+      - TRADING_PAIR=${TRADING_PAIR:-BTC/USDT}
+      - INITIAL_CAPITAL=${INITIAL_CAPITAL:-10000.0}
+      - ENABLE_SENTIMENT=${ENABLE_SENTIMENT:-false}
+      - PORT=5000
+      - FLASK_DEBUG=false
+
+  # Optional: Add a reverse proxy for HTTPS
+  nginx:
+    image: nginx:1.21-alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d
+      - ./nginx/ssl:/etc/nginx/ssl
+      - ./nginx/html:/usr/share/nginx/html
+    depends_on:
+      - crypto-bot-ui
+
+# Uncomment the following lines to use Docker's bind mount for volume persistence
+#volumes:
+#  data:
+#  output:
+#  logs: 
